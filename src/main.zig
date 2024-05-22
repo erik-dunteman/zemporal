@@ -1,16 +1,16 @@
 const std = @import("std");
 const print = std.debug.print;
 
+// Tasks are heap allocated
+const Task = struct {
+    startTime: i64,
+    next: ?*Task = null,
+    callback: *const fn (*Task) void, // we use containers to hold the implementaiton
+};
+
 // Timeline is a single linked list, with soonest upcoming task at the head
 const Timeline = struct {
     const Self = @This();
-
-    // Tasks are heap allocated
-    pub const Task = struct {
-        startTime: i64,
-        next: ?*Task = null,
-        callback: *const fn (*Task) void, // we use containers to hold the implementaiton
-    };
 
     head: ?*Task = null,
     alloc: std.mem.Allocator,
@@ -102,31 +102,38 @@ const Timeline = struct {
     }
 };
 
-const Context = struct {
-    value: usize,
-    task: Timeline.Task = .{ .callback = func, .startTime = 0 },
-
-    pub fn scheduleToIncrement(this: *Context, tl: *Timeline, startTime: i64) !void {
-        this.task.startTime = startTime;
-        try tl.schedule(&this.task);
-    }
-
-    fn func(task_ptr: *Timeline.Task) void {
-        print("Task triggered\n", .{});
-        const this = @fieldParentPtr(Context, "task", task_ptr);
-        this.value += 1;
-    }
-};
-
 test "test" {
+
+    // user-defined Context container containing callback func
+    const Context = struct {
+        value: usize,
+        task: Task = .{ .callback = func, .startTime = 0 },
+
+        const Self = @This();
+
+        pub fn new(value: usize, startTime: i64) Self {
+            return Self{
+                .task = .{ .callback = func, .startTime = startTime },
+                .value = value,
+            };
+        }
+
+        fn func(task_ptr: *Task) void {
+            print("Task triggered\n", .{});
+            const this = @fieldParentPtr(Self, "task", task_ptr);
+            this.value += 1;
+        }
+    };
+
     var tl = Timeline{ .alloc = std.testing.allocator };
     defer tl.destroy();
     tl.debug();
 
-    var c = Context{ .value = 1 };
     var now = std.time.milliTimestamp();
+
+    var c = Context.new(1, now + 1000);
     print("c = {}\n", .{c.value});
-    try c.scheduleToIncrement(&tl, now + 1000);
+    try tl.schedule(&c.task);
     tl.debug();
     print("c = {}\n", .{c.value});
 
