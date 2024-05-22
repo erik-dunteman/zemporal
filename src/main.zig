@@ -4,8 +4,9 @@ const print = std.debug.print;
 // Tasks are heap allocated
 const Task = struct {
     startTime: i64,
+    complete: bool = false,
     next: ?*Task = null,
-    callback: *const fn (*Task) void, // we use containers to hold the implementaiton
+    callback: *const fn (*Task) void, // we use context containers to hold the implementation, and just point to it here
 };
 
 // Timeline is a single linked list, with soonest upcoming task at the head
@@ -15,6 +16,11 @@ const Timeline = struct {
     head: ?*Task = null,
     alloc: std.mem.Allocator,
     mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    closed: bool = false,
+
+    fn close(self: *Self) void {
+        self.closed = true;
+    }
 
     fn debug(self: *Self) void {
         self.mutex.lock();
@@ -93,11 +99,16 @@ const Timeline = struct {
                     if (head.startTime < std.time.milliTimestamp()) {
                         self.head = head.next;
                         (head.callback)(head);
+                        head.complete = true;
                         continue;
                     }
                 }
             }
+            // only in case of nothing to consume
             std.time.sleep(10);
+            if (self.closed) {
+                break;
+            }
         }
     }
 };
@@ -107,7 +118,7 @@ test "test" {
     // user-defined Context container containing callback func
     const Context = struct {
         value: usize,
-        task: Task = .{ .callback = func, .startTime = 0 },
+        task: Task,
 
         const Self = @This();
 
@@ -141,8 +152,11 @@ test "test" {
     const t = try std.Thread.spawn(.{}, Timeline.run, .{&tl});
     defer t.join();
 
-    for (0..20) |_| {
+    while (c.task.complete == false) {
         print("c = {}\n", .{c.value});
         std.time.sleep(100_000_000);
     }
+    print("c = {}\n", .{c.value});
+
+    tl.close();
 }
