@@ -145,11 +145,16 @@ test "test" {
 
         // users must follow this boilerplate
         fn func(task_ptr: *Task) void {
+            // this callback func is invoked by the Task queue, but we want to access arbitrary values in the container
+            // so we use the @fieldParentPtr to get "this", making this effectively a method on the container instance
             const this = @fieldParentPtr(Self, "task", task_ptr);
 
             // users implement arbitrary function here
             // for example, incrementing some value
             this.value += 1;
+
+            // or can call other arbitrary methods
+            // this.someOtherFunc();
         }
     };
 
