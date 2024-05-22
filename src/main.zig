@@ -7,6 +7,12 @@ const Task = struct {
     complete: bool = false,
     next: ?*Task = null,
     callback: *const fn (*Task) void, // we use context containers to hold the implementation, and just point to it here
+
+    fn wait(self: *Task) void {
+        while (!self.complete) {
+            std.time.sleep(10);
+        }
+    }
 };
 
 // Timeline is a single linked list, with soonest upcoming task at the head
@@ -56,6 +62,8 @@ const Timeline = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        defer print("Task scheduled\n", .{});
+
         if (self.head) |head| {
 
             // case: new task should be first in timeline
@@ -97,6 +105,7 @@ const Timeline = struct {
                 defer self.mutex.unlock();
                 if (self.head) |head| {
                     if (head.startTime < std.time.milliTimestamp()) {
+                        print("Task triggered\n", .{});
                         self.head = head.next;
                         (head.callback)(head);
                         head.complete = true;
@@ -114,11 +123,16 @@ const Timeline = struct {
 };
 
 test "test" {
+    // start the scheduling engine in the background
+    var tl = Timeline{ .alloc = std.testing.allocator };
+    defer tl.destroy();
+    const t = try std.Thread.spawn(.{}, Timeline.run, .{&tl});
+    defer t.join();
 
     // user-defined Context container containing callback func
     const Context = struct {
-        value: usize,
         task: Task,
+        value: usize,
 
         const Self = @This();
 
@@ -129,34 +143,31 @@ test "test" {
             };
         }
 
+        // users must follow this boilerplate
         fn func(task_ptr: *Task) void {
-            print("Task triggered\n", .{});
             const this = @fieldParentPtr(Self, "task", task_ptr);
+
+            // users implement arbitrary function here
+            // for example, incrementing some value
             this.value += 1;
         }
     };
 
-    var tl = Timeline{ .alloc = std.testing.allocator };
-    defer tl.destroy();
-    tl.debug();
-
-    var now = std.time.milliTimestamp();
-
-    var c = Context.new(1, now + 1000);
+    // create task context
+    // set contained value to 1. This is effectively the function argument.
+    // set startTime to 2 seconds in future.
+    var c = Context.new(1, std.time.milliTimestamp() + 2000);
     print("c = {}\n", .{c.value});
+    try std.testing.expect(c.value == 1);
+
+    // schedule
     try tl.schedule(&c.task);
-    tl.debug();
+
+    // await completion
+    c.task.wait();
     print("c = {}\n", .{c.value});
+    try std.testing.expect(c.value == 2);
 
-    // run the engine in the background
-    const t = try std.Thread.spawn(.{}, Timeline.run, .{&tl});
-    defer t.join();
-
-    while (c.task.complete == false) {
-        print("c = {}\n", .{c.value});
-        std.time.sleep(100_000_000);
-    }
-    print("c = {}\n", .{c.value});
-
+    // cleanup
     tl.close();
 }
